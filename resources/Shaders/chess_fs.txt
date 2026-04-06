@@ -1,0 +1,29 @@
+#version 330 core
+out vec4 FragColor;
+
+in vec2 TexCoords;
+in vec3 Position;
+in vec3 Normal;
+
+uniform vec3 cameraPos;
+uniform sampler2D texture_diffuse1;
+uniform samplerCube skybox;
+uniform float reflectivity = 0.2; // Default 20% shine
+
+void main()
+{    
+    // Base color from the diffuse texture map
+    vec4 texColor = texture(texture_diffuse1, TexCoords);
+
+    // Environment Mapping (Reflection)
+    // I = vector from camera to the pixel
+    vec3 I = normalize(Position - cameraPos);
+    // R = reflected vector based on the surface normal
+    vec3 R = reflect(I, normalize(Normal));
+    
+    // Sample the skybox using the reflected vector
+    vec3 envColor = texture(skybox, R).rgb;
+
+    // Linear interpolation between texture and reflection
+    FragColor = vec4(mix(texColor.rgb, envColor, reflectivity), texColor.a);
+}

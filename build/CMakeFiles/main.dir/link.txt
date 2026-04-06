@@ -1,1 +1,0 @@
-/usr/bin/c++ "CMakeFiles/main.dir/src/3D-Chess.cpp.o" CMakeFiles/main.dir/src/stb_image_impl.cpp.o CMakeFiles/main.dir/dependencies/glad/glad/glad.c.o -o main  /usr/lib/x86_64-linux-gnu/libOpenGL.so /usr/lib/x86_64-linux-gnu/libGLX.so -lglfw -lassimp -ldl 

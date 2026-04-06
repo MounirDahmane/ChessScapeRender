@@ -1,212 +1,220 @@
+/**
+ * @file 3D-Chess.cpp
+ * @brief Optimized main entry point for the ChessScapeRender engine.
+ */
+
+#include <csignal>
+#include <iostream>
+#include <vector>
+
+// GLM Headers
 #include "model.h"
-#include <GLFW/glfw3.h>
 #include "utility.h"
 
-#define ASSERT(condition) if (!(condition)) __debugbreak()
-#define GLCALL(call) ClearOpenGLErrors();\
-    call;\
-    ASSERT(LogOpenGLError(#call, __FILE__, __LINE__))
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
-struct ChessPiece {
-    const Model* pieceModel;
-    glm::mat4 transformationMatrix;
+// --- Macros & Debugging ---
+#ifdef _WIN32
+#define ASSERT(condition)                                                                          \
+    if (!(condition))                                                                              \
+    __debugbreak()
+#else
+#define ASSERT(condition)                                                                          \
+    if (!(condition))                                                                              \
+    raise(SIGTRAP)
+#endif
+
+// --- Data Structures ---
+struct ChessPiece
+{
+    const Model *model;
+    glm::mat4 transform;
+    float reflectivity;
 };
 
-constexpr float PIECE_SCALE_FACTOR = 0.16f;
-constexpr int TOTAL_MAIN_PIECES = 16;
-constexpr int PAWNS_PER_COLOR = 8;
-constexpr int TOTAL_PIECES = TOTAL_MAIN_PIECES + 2 * PAWNS_PER_COLOR;
-constexpr float SKYBOX_SCALE = 30.0f;
+/** @brief RAII container for OpenGL resource handles */
+struct SceneResources
+{
+    unsigned int cVAO, cVBO;
+    unsigned int sVAO, sVBO;
+    unsigned int cubemap;
+};
 
-static void ClearOpenGLErrors() {
-    while (glGetError() != GL_NO_ERROR);
+// --- Constants ---
+constexpr float PIECE_SCALE = 0.16f;
+constexpr int TOTAL_PIECES = 32;
+
+// --- Helper Functions ---
+
+static glm::mat4 CreateTransform(const glm::vec3 &pos, float scale)
+{
+    return glm::scale(glm::translate(glm::mat4(1.0f), pos), glm::vec3(scale));
 }
 
-static bool LogOpenGLError(const char* function, const char* file, int line) {
-    while (GLenum error = glGetError()) {
-        std::cout << "OPENGL::ERROR_(" << error << "): " << function << " " << file << ":" << line << std::endl;
-        return false;
-    }
-    return true;
-}
+static GLFWwindow *SetupContext()
+{
+    GLFWwindow *window;
+    if (GLFW_SETUP(window, State::width, State::height) != 0)
+        exit(-1);
 
-static glm::mat4 CreatePieceTransformationMatrix(const glm::vec3& position, float scale) {
-    return glm::scale(glm::translate(glm::mat4(1.0f), position), glm::vec3(scale));
-}
-
-static GLFWwindow* InitializeWindowAndOpenGL() {
-    GLFWwindow* window;
-    GLFW_SETUP(window, width, height);
-
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::cerr << "ERROR::FAILED_LOADING_GLAD" << std::endl;
+    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+    {
+        std::cerr << "ERROR::GLAD_INIT_FAILED" << std::endl;
         glfwDestroyWindow(window);
         glfwTerminate();
         exit(-1);
     }
-
     return window;
 }
 
-static void SetupChessPieces(std::vector<ChessPiece>& pieces,
-    const Model& chessBoard,
-    const Model& blackKing,
-    const Model& grayKing,
-    const Model& blackQueen,
-    const Model& grayQueen,
-    const Model& blackBishop,
-    const Model& grayBishop,
-    const Model& blackKnight,
-    const Model& grayKnight,
-    const Model& blackRook,
-    const Model& grayRook,
-    const Model& blackPawn,
-    const Model& grayPawn,
-    float scale) {
+static void PopulateBoard(
+    std::vector<ChessPiece> &pieces,
+    const Model &bK,
+    const Model &gK,
+    const Model &bQ,
+    const Model &gQ,
+    const Model &bB,
+    const Model &gB,
+    const Model &bN,
+    const Model &gN,
+    const Model &bR,
+    const Model &gR,
+    const Model &bP,
+    const Model &gP)
+{
     pieces.reserve(TOTAL_PIECES);
 
-    pieces.emplace_back(ChessPiece{ &blackQueen,  CreatePieceTransformationMatrix(glm::vec3(-0.127f, 0.0f, 0.912f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayQueen,   CreatePieceTransformationMatrix(glm::vec3(-0.127f, 0.0f, -0.912f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackKing,   CreatePieceTransformationMatrix(glm::vec3(0.127f, 0.0f, 0.912f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayKing,    CreatePieceTransformationMatrix(glm::vec3(-0.127f, 0.0f, -0.912f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackBishop, CreatePieceTransformationMatrix(glm::vec3(0.383f, 0.0f, 0.898f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackBishop, CreatePieceTransformationMatrix(glm::vec3(-0.383f, 0.0f, 0.898f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayBishop,  CreatePieceTransformationMatrix(glm::vec3(0.383f, 0.0f, -0.898f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayBishop,  CreatePieceTransformationMatrix(glm::vec3(-0.383f, 0.0f, -0.898f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackKnight, CreatePieceTransformationMatrix(glm::vec3(0.645f, 0.0f, 0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackKnight, CreatePieceTransformationMatrix(glm::vec3(-0.645f, 0.0f, 0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayKnight,  CreatePieceTransformationMatrix(glm::vec3(0.645f, 0.0f, -0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayKnight,  CreatePieceTransformationMatrix(glm::vec3(-0.645f, 0.0f, -0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackRook,   CreatePieceTransformationMatrix(glm::vec3(0.902f, 0.0f, 0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &blackRook,   CreatePieceTransformationMatrix(glm::vec3(-0.902f, 0.0f, 0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayRook,    CreatePieceTransformationMatrix(glm::vec3(0.902f, 0.0f, -0.907f), scale) });
-    pieces.emplace_back(ChessPiece{ &grayRook,    CreatePieceTransformationMatrix(glm::vec3(-0.902f, 0.0f, -0.907f), scale) });
+    // Royalty & Power
+    pieces.push_back({&bQ, CreateTransform(glm::vec3(-0.127f, 0.0f, 0.912f), PIECE_SCALE), 0.45f});
+    pieces.push_back({&gQ, CreateTransform(glm::vec3(-0.127f, 0.0f, -0.912f), PIECE_SCALE), 0.45f});
+    pieces.push_back({&bK, CreateTransform(glm::vec3(0.127f, 0.0f, 0.912f), PIECE_SCALE), 0.45f});
+    pieces.push_back({&gK, CreateTransform(glm::vec3(0.127f, 0.0f, -0.912f), PIECE_SCALE), 0.45f});
 
-    for (int i = 0; i < PAWNS_PER_COLOR; ++i) {
-        float xPosition = -0.905f + i * 0.26f;
-        pieces.emplace_back(ChessPiece{ &blackPawn, CreatePieceTransformationMatrix(glm::vec3(xPosition, 0.0f, 0.637f), scale) });
-        pieces.emplace_back(ChessPiece{ &grayPawn, CreatePieceTransformationMatrix(glm::vec3(xPosition, 0.0f, -0.637f), scale) });
+    // Bishops, Knights, Rooks (Shared logic for efficiency)
+    auto addMirror = [&](const Model *b, const Model *g, float x, float z, float refl)
+    {
+        pieces.push_back({b, CreateTransform(glm::vec3(x, 0.0f, z), PIECE_SCALE), refl});
+        pieces.push_back({b, CreateTransform(glm::vec3(-x, 0.0f, z), PIECE_SCALE), refl});
+        pieces.push_back({g, CreateTransform(glm::vec3(x, 0.0f, -z), PIECE_SCALE), refl});
+        pieces.push_back({g, CreateTransform(glm::vec3(-x, 0.0f, -z), PIECE_SCALE), refl});
+    };
+
+    addMirror(&bB, &gB, 0.383f, 0.898f, 0.30f);
+    addMirror(&bN, &gN, 0.645f, 0.907f, 0.30f);
+    addMirror(&bR, &gR, 0.902f, 0.907f, 0.30f);
+
+    // Pawns
+    for (int i = 0; i < 8; ++i)
+    {
+        float x = -0.905f + i * 0.26f;
+        pieces.push_back({&bP, CreateTransform(glm::vec3(x, 0.0f, 0.637f), PIECE_SCALE), 0.15f});
+        pieces.push_back({&gP, CreateTransform(glm::vec3(x, 0.0f, -0.637f), PIECE_SCALE), 0.15f});
     }
 }
 
-static void SetupOpenGLResources(unsigned int& cullingVAO, unsigned int& cullingVBO, unsigned int& skyboxVAO, unsigned int& skyboxVBO, unsigned int& cubemapTexture) {
-    configureGLState();
-    setupCullingVAO(cullingVAO, cullingVBO);
-    setupSkyboxVAO(skyboxVAO, skyboxVBO);
-    cubemapTexture = loadCubemap(faces);
-}
+// --- Render Logic ---
 
-static void RenderChessBoard(MyShader& shader, const Model& chessBoard, const glm::mat4& projectionMatrix, const glm::mat4& viewMatrix) {
-    shader.use();
-    glm::mat4 boardModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.1f, 0.0f));
-    shader.SetUniformMat4fv("model", 1, boardModelMatrix, GL_FALSE);
-    shader.SetUniformMat4fv("projection", 1, projectionMatrix, GL_FALSE);
-    shader.SetUniformMat4fv("view", 1, viewMatrix, GL_FALSE);
-    shader.SetUniform3f("cameraPos", camera_pos);
-    chessBoard.Draw(shader, FIRST);
-}
-
-static void RenderChessPieces(MyShader& shader, const std::vector<ChessPiece>& pieces, const glm::mat4& projectionMatrix, const glm::mat4& viewMatrix) {
-    shader.use();
-    shader.SetUniformMat4fv("projection", 1, projectionMatrix, GL_FALSE);
-    shader.SetUniformMat4fv("view", 1, viewMatrix, GL_FALSE);
-    shader.SetUniform3f("cameraPos", camera_pos);
-
-    for (const auto& piece : pieces) {
-        if (piece.pieceModel) {
-            shader.SetUniformMat4fv("model", 1, piece.transformationMatrix, GL_FALSE);
-            piece.pieceModel->Draw(shader, FIRST);
-        }
-    }
-}
-
-static void RenderSkybox(MyShader& skyboxShader, unsigned int skyboxVAO, unsigned int cubemapTexture, const glm::mat4& projectionMatrix, const glm::mat4& viewMatrix) {
+static void RenderScene(
+    const MyShader &modelShader,
+    const MyShader &skyShader,
+    const Model &board,
+    const std::vector<ChessPiece> &pieces,
+    const SceneResources &res,
+    const glm::mat4 &proj,
+    const glm::mat4 &view)
+{
+    // 1. Skybox Pass
     glDepthFunc(GL_LEQUAL);
-    skyboxShader.use();
-
-    glm::mat4 skyboxModelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
-    skyboxModelMatrix = glm::scale(skyboxModelMatrix, glm::vec3(SKYBOX_SCALE));
-
-    skyboxShader.SetUniformMat4fv("model", 1, skyboxModelMatrix, GL_FALSE);
-    skyboxShader.SetUniformMat4fv("view", 1, viewMatrix, GL_FALSE);
-    skyboxShader.SetUniformMat4fv("projection", 1, projectionMatrix, GL_FALSE);
-
-    glBindVertexArray(skyboxVAO);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    skyShader.use();
+    skyShader.SetUniformMat4fv("view", view);
+    skyShader.SetUniformMat4fv("projection", proj);
+    glBindVertexArray(res.sVAO);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, res.cubemap);
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glDepthFunc(GL_LESS);
+
+    // 2. Model Pass Preparation
+    modelShader.use();
+    modelShader.SetUniformMat4fv("projection", proj);
+    modelShader.SetUniformMat4fv("view", view);
+    modelShader.SetUniform3f("cameraPos", Camera::pos);
+
+    // Bind environment map once for all models (Slot 10)
+    glActiveTexture(GL_TEXTURE10);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, res.cubemap);
+    modelShader.SetUniform1i("skybox", 10);
+
+    // 3. Draw Board
+    glm::mat4 boardMat = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.1f, 0.0f));
+    modelShader.SetUniformMat4fv("model", boardMat);
+    board.Draw(modelShader, StencilMode::First);
+
+    // 4. Draw Pieces
+    for (const auto &piece : pieces)
+    {
+        modelShader.SetUniformMat4fv("model", piece.transform);
+        modelShader.SetUniform1f("reflectivity", piece.reflectivity);
+        piece.model->Draw(modelShader, StencilMode::None);
+    }
 }
 
-static void RunGameLoop(GLFWwindow* window, MyShader& modelShader, MyShader& skyboxShader, const Model& chessBoard, const std::vector<ChessPiece>& pieces, unsigned int skyboxVAO, unsigned int cubemapTexture, unsigned int cullingVAO, unsigned int cullingVBO, unsigned int skyboxVBO) {
-    while (!glfwWindowShouldClose(window)) {
-        // Clear buffers
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+int main()
+{
+    GLFWwindow *window = SetupContext();
+    SceneResources res;
 
-        // Update timing
-        deltaTime = glfwGetTime() - lastTime;
-        lastTime = glfwGetTime();
+    {
+        MyShader modelShader(Paths::VS_MODEL, Paths::FS_MODEL);
+        MyShader skyShader(Paths::VS_SKY, Paths::FS_SKY);
 
-        // Process user input
-        ProcessInput(window);
+        Model board(Paths::CHESS_BOARD);
+        Model bK(Paths::BLACK_KING);
+        Model gK(Paths::GRAY_KING);
+        Model bQ(Paths::BLACK_QUEEN);
+        Model gQ(Paths::GRAY_QUEEN);
+        Model bB(Paths::BLACK_BISHOP);
+        Model gB(Paths::GRAY_BISHOP);
+        Model bN(Paths::BLACK_KNIGHT);
+        Model gN(Paths::GRAY_KNIGHT);
+        Model bR(Paths::BLACK_ROOK);
+        Model gR(Paths::GRAY_ROOK);
+        Model bP(Paths::BLACK_PAWN);
+        Model gP(Paths::GRAY_PAWN);
 
-        // Setup view and projection matrices
-        glm::mat4 viewMatrix = glm::lookAt(camera_pos, camera_pos + camera_front, glm::vec3(0.0f, 1.0f, 0.0f));
-        glm::mat4 projectionMatrix = glm::perspective(glm::radians(fov), static_cast<float>(width) / height, 0.1f, 100.0f);
+        configureGLState();
+        setupCullingVAO(res.cVAO, res.cVBO);
+        setupSkyboxVAO(res.sVAO, res.sVBO);
+        res.cubemap = loadCubemap(faces);
 
-        // Render scene
-        RenderChessBoard(modelShader, chessBoard, projectionMatrix, viewMatrix);
-        RenderChessPieces(modelShader, pieces, projectionMatrix, viewMatrix);
-        RenderSkybox(skyboxShader, skyboxVAO, cubemapTexture, projectionMatrix, viewMatrix);
+        std::vector<ChessPiece> pieces;
+        PopulateBoard(pieces, bK, gK, bQ, gQ, bB, gB, bN, gN, bR, gR, bP, gP);
 
-        // Swap buffers and poll events
-        glfwSwapBuffers(window);
-        glfwPollEvents();
+        State::lastTime = (float)glfwGetTime();
+
+        while (!glfwWindowShouldClose(window))
+        {
+            float currentFrame = (float)glfwGetTime();
+            State::deltaTime = currentFrame - State::lastTime;
+            State::lastTime = currentFrame;
+
+            glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+            ProcessInput(window);
+
+            glm::mat4 view = glm::lookAt(Camera::pos, Camera::pos + Camera::front, Camera::up);
+            glm::mat4 proj = glm::perspective(
+                glm::radians(Camera::fov), (float)State::width / State::height, 0.1f, 100.0f);
+
+            RenderScene(modelShader, skyShader, board, pieces, res, proj, view);
+
+            glfwSwapBuffers(window);
+            glfwPollEvents();
+        }
     }
 
-    // Cleanup resources
-    cleanup(window, cullingVAO, cullingVBO, skyboxVAO, skyboxVBO, cubemapTexture);
-}
-
-int main() {
-    // Initialize GLFW and GLAD
-    GLFWwindow* gameWindow = InitializeWindowAndOpenGL();
-
-    // Initialize shaders
-    MyShader modelShader(VS_MODEL, FS_MODEL);
-    MyShader skyboxShader(VS_SKY, FS_SKY);
-
-    // Load chess models (using the sequential loading logic from the provided code)
-    Model chessBoard(CHESS_BOARD);
-    Model blackKing(BLACK_KING);
-    Model grayKing(GRAY_KING);
-    Model blackQueen(BLACK_QUEEN);
-    Model grayQueen(GRAY_QUEEN);
-    Model blackBishop(BLACK_BISHOP);
-    Model grayBishop(GRAY_BISHOP);
-    Model blackKnight(BLACK_KNIGHT);
-    Model grayKnight(GRAY_KNIGHT);
-    Model blackRook(BLACK_ROOK);
-    Model grayRook(GRAY_ROOK);
-    Model blackPawn(BLACK_PAWN);
-    Model grayPawn(GRAY_PAWN);
-
-    // Setup OpenGL resources
-    unsigned int cullingVAO, cullingVBO, skyboxVAO, skyboxVBO, cubemapTexture;
-    SetupOpenGLResources(cullingVAO, cullingVBO, skyboxVAO, skyboxVBO, cubemapTexture);
-
-    // Setup chess pieces
-    std::vector<ChessPiece> chessPieces;
-    SetupChessPieces(chessPieces, chessBoard, blackKing, grayKing, blackQueen, grayQueen,
-        blackBishop, grayBishop, blackKnight, grayKnight, blackRook, grayRook,
-        blackPawn, grayPawn, PIECE_SCALE_FACTOR);
-
-    // Run the game loop
-    RunGameLoop(gameWindow, modelShader, skyboxShader, chessBoard, chessPieces, skyboxVAO, cubemapTexture, cullingVAO, cullingVBO, skyboxVBO);
-
-    std::cin.get();
+    cleanup(window, res.cVAO, res.cVBO, res.sVAO, res.sVBO, res.cubemap);
     return 0;
 }
-
-
-

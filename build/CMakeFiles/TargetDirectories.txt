@@ -1,3 +1,0 @@
-/home/dragunov/Documents/vsCode/Projects/3D-Chess-Board/build/CMakeFiles/ChessScapeRender.dir
-/home/dragunov/Documents/vsCode/Projects/3D-Chess-Board/build/CMakeFiles/edit_cache.dir
-/home/dragunov/Documents/vsCode/Projects/3D-Chess-Board/build/CMakeFiles/rebuild_cache.dir
